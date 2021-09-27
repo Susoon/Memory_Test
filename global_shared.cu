@@ -12,7 +12,7 @@
 #define true 1
 #define false 0
 
-#define GLOBAL 1
+#define GLOBAL 0
 #define BATCH 0
 
 #define THREAD_NUM 512
@@ -39,7 +39,7 @@ __global__ void global_to_global(uint8_t *area1, uint8_t *area2, uint32_t knum, 
 
     __shared__ uint8_t tmp_area[TOKEN * THREAD_NUM];
 
-    for(int i = area2_offset; i < area2_offset + THREAD_NUM; i++){
+    for(int i = threadIdx.x * TOKEN; i < threadIdx.x * TOKEN + TOKEN; i++){
         tmp_area[i] = 0;
     }
 
@@ -69,26 +69,27 @@ __global__ void shared_to_global(uint8_t *area1, uint8_t *area2, uint32_t knum, 
 
     __shared__ uint8_t tmp_area[TOKEN * THREAD_NUM];
 
-    for(int i = area2_offset; i < area2_offset + THREAD_NUM; i++){
+    for(int i = threadIdx.x * TOKEN; i < threadIdx.x * TOKEN + TOKEN; i++){
         tmp_area[i] = 0;
     }
 
-    memcpy(tmp_area + area2_offset, area1 + area1_offset, TOKEN);
+    if(threadIdx.x == 0)
+        start = clock64();
 
-    asm volatile("mov.u64 %0, %%clock64;" : "=l"(start));
-    //start = clock64();
+    memcpy(tmp_area + threadIdx.x * TOKEN, area1 + area1_offset, TOKEN);
 #if BATCH
     __syncthreads();
     if(threadIdx.x == THREAD_NUM - 1){
         memcpy(area2 + knum * THREAD_NUM + blockIdx.x * THREAD_NUM, tmp_area, TOKEN * THREAD_NUM);
     }
 #else
-    memcpy(area2 + area2_offset, tmp_area + area2_offset, TOKEN);
+    memcpy(area2 + area2_offset, tmp_area + threadIdx.x * TOKEN, TOKEN);
 #endif
-    asm volatile("mov.u64 %0, %%clock64;" : "=l"(end));
-    //end = clock64();
+    if(threadIdx.x == 0)
+        end = clock64();
 
-    time[knum * THREAD_NUM + blockIdx.x * THREAD_NUM + threadIdx.x] = end - start;
+    if(threadIdx.x == 0)
+        time[knum + blockIdx.x] = end - start;
 }
 
 int main(void)
@@ -160,12 +161,11 @@ int main(void)
 
         cudaMemcpy(tmp_times, gpu_times, sizeof(uint64_t) * BLOCK_NUM, cudaMemcpyDeviceToHost);
   
-        uint64_t tmp = 0;
         for(int j = 0; j < BLOCK_NUM; j++){
-            tmp += tmp_times[j];
+            times[i] += tmp_times[j];
         }  
 
-        times[i] = tmp_times[0] / BLOCK_NUM;
+        times[i] /= BLOCK_NUM;
 /*
         times[i] = end - start;
 */
